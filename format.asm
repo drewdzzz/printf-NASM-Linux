@@ -43,7 +43,6 @@ _start:			mov r8d, 186
 				call dec_format
 				mov rax, 0x01
 				mov rdi, STDOUT
-
 				syscall
 
 				mov rax, EXIT
