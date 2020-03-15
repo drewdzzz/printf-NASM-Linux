@@ -1,5 +1,5 @@
 section .data
-format_string db "I wanna decimal: %d, hex: %x, oct: %o, binary: %b, string: %s, char: %c", 0x0a, '$'
+format_string db "I wanna decimal: %d, hex: %x, oct: %o, binary: %b, string: %s, char: %c and per cent: %%", 0x0a, '$'
 string:		  db "THAT'S A STRING FOR OUTPUT"
 
 
@@ -109,6 +109,9 @@ format_parser:
 ;==============================================================
 select_substitution_and_print:
 
+				cmp r11b, '%'
+				jz .percent
+
 				mov r8, [rbp]
 				add rbp, 8
 
@@ -131,21 +134,24 @@ select_substitution_and_print:
 				call char_format
 				jmp .format_defined
 
+.percent:		call percent_format		
+				jmp .format_defined
+
 .string:
 				call string_format
 				jmp .format_defined
 
-.binary			call bin_format
+.binary:			call bin_format
 				jmp .format_defined
 
-.octal			call oct_format
+.octal:			call oct_format
 				jmp .format_defined
 				
-.hexadecimal	call hex_format
+.hexadecimal:	call hex_format
 				jmp .format_defined
 
-.decimal		call dec_format
-				jmp .format_defined
+.decimal:		call dec_format
+
 
 .format_defined:
 				
@@ -159,8 +165,8 @@ select_substitution_and_print:
 ;==============================================================
 ;Enter:			Requires buffer
 ;				R8B - symbol
-;Exit:			RDX - = 1
-;
+;Exit:			RDX = 1
+;				RSI - ptr to char in a buffer
 ;==============================================================
 char_format:
 				mov rsi, buffer
@@ -205,8 +211,8 @@ string_format:
 ;			RDX - length of buffer
 ;Exit:		RSI - address of place in buffer after all the insignificant zeroes
 ;			RDX - new length of buffer
-;			AL  - = '0'
-;			ES  - = DS	
+;			AL  = '0'
+;			ES  = DS	
 ;Destr:		RAX RCX
 ;==============================================================
 %macro skip_zero_rsi 0
@@ -365,5 +371,21 @@ dec_format:
 				mov dl, r10b
 
 				skip_zero_rsi
+
+				ret
+
+
+;==============================================================
+;Enter:			requires buffer
+;Exit:			RSI - ptr to '%' in a buffer
+;				RDX = 1
+;				R8B = '%'
+;==============================================================
+percent_format:
+				mov rsi, buffer
+				mov r8b, '%'
+				mov [rsi], r8b
+				xor rdx, rdx
+				inc rdx
 
 				ret
