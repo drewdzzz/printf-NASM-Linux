@@ -1,12 +1,11 @@
 section .data
-format_string db "I wanna decimal: %d, hex: %x, oct: %o, binary: %b", 0x0a, '$'
+format_string db "I wanna decimal: %d, hex: %x, oct: %o, binary: %b, string: %s, char: %c", 0x0a, '$'
+string:		  db "THAT'S A STRING FOR OUTPUT"
 
-dec:		  db "dec"
-chr :		  db "chr"
-oct :		  db "oct"
-hex :		  db "hex"
-bin :          db "bin"
-str: 		  db "str"
+
+BUFFER_SIZE equ 50
+buffer times BUFFER_SIZE db 0
+
 
 WRITE64 equ 0x01
 STDOUT  equ 0x01
@@ -18,7 +17,12 @@ section .text
 
 global _start
 
-_start:			mov rsi, format_string
+_start:
+				push '#'
+				push string
+				times 4 push 186
+				mov rbp, rsp
+				mov rsi, format_string
 				call format_parser
 
 				mov rax, EXIT
@@ -52,7 +56,7 @@ _start:			mov rsi, format_string
 ;Entry:			RSI - format string
 ;
 ;Exit:			
-;Destr:			R8B RDX RDI RAX RCX R10
+;Destr:			R8B RDX RDI RAX RCX RBX R10
 ;Note:			uses CLD
 ;==============================================================
 format_parser:
@@ -72,18 +76,19 @@ format_parser:
 				cmp al, ah
 				jnz .not_format_symbol
 
-				mov r10, rsi
+				mov rbx, rsi
 
 				print_before_format_symbol
 
-				mov r11b, [r10]
-				inc r10
+				mov r11b, [rbx]
+				inc rbx
 
 				call select_substitution_and_print
 
-				mov rdi, r10
-				mov rsi, r10
+				mov rdi, rbx
+				mov rsi, rbx
 				mov ah, '%'
+				mov r8b, '$'
 
 .not_format_symbol:
 				LOOP .parsing_string
@@ -100,9 +105,13 @@ format_parser:
 ;==============================================================
 ;Entry:			R11B - format symbol
 ;				
-;
+;Destr:			RAX RDI
 ;==============================================================
 select_substitution_and_print:
+
+				mov r8, [rbp]
+				add rbp, 8
+
 				cmp r11b, 'd'
 				jz .decimal
 
@@ -122,7 +131,8 @@ select_substitution_and_print:
 				call char_format
 				jmp .format_defined
 
-.string:		call string_format
+.string:
+				call string_format
 				jmp .format_defined
 
 .binary			call bin_format
@@ -139,60 +149,221 @@ select_substitution_and_print:
 
 .format_defined:
 				
-
-
-
-				ret
-
-dec_format:		
 				mov rax, WRITE64
 				mov rdi, STDOUT
-				mov rsi, dec
-				mov rdx, 3
 				syscall
-
+				
 				ret
 
-bin_format:		
-				mov rax, WRITE64
-				mov rdi, STDOUT
-				mov rsi, bin
-				mov rdx, 3
-				syscall
 
-				ret
-
-hex_format:		
-				mov rax, WRITE64
-				mov rdi, STDOUT
-				mov rsi, hex
-				mov rdx, 3
-				syscall
-
-				ret
-
-oct_format:		
-				mov rax, WRITE64
-				mov rdi, STDOUT
-				mov rsi, oct
-				mov rdx, 3
-				syscall
-
-				ret
-
+;==============================================================
+;Enter:			Requires buffer
+;				R8B - symbol
+;Exit:			RDX - = 1
+;
+;==============================================================
 char_format:
-				mov rax, WRITE64
-				mov rdi, STDOUT
-				mov rsi, chr
-				mov rdx, 3
-				syscall
+				mov rsi, buffer
+				mov [rsi], r8b
+				xor rdx, rdx
+				inc rdx
+
 				ret
 
+
+;==============================================================
+;Entry:		R8 - ADDRESS OF STRING
+;
+;Exit:		RCX - length of string
+;			ES = DS
+;			RSI - ptr to the string
+;			RDX - length of string
+;Destr:		ES RAX RDI
+;Note:		using CLD 
+;==============================================================
 string_format:
-				mov rax, WRITE64
-				mov rdi, STDOUT
-				mov rsi, str
-				mov rdx, 3
-				syscall
+				cld
+				mov rsi, r8
+
+				mov rdi, r8
+				mov eax, ds
+				mov es, eax
+				xor al, al
+
+				xor rcx, rcx
+				dec rcx
+
+				repne scasb
+				neg rcx
+				dec rcx
+				mov rdx, rcx
+				ret
+
+
+;==============================================================
+;Enter:		RSI - address of buffer
+;			RDX - length of buffer
+;Exit:		RSI - address of place in buffer after all the insignificant zeroes
+;			RDX - new length of buffer
+;			AL  - = '0'
+;			ES  - = DS	
+;Destr:		RAX RCX
+;==============================================================
+%macro skip_zero_rsi 0
+				mov eax, ds
+				mov es, eax
+				mov al, '0'
+				mov rcx, rdx
+				dec rcx
+%%skipping:	
+				cmp al, [rsi]
+				jnz %%break
+				inc rsi
+				dec rdx
+				loop %%skipping
+%%break:
+
+%endmacro
+
+
+;==============================================================
+;Entry:			requires buffer and const BUFFER_SIZE
+;				R8D	- int value
+;Exit: 			RDX - length of buffer
+;				RSI - ptr to number in buffer
+;				ES  = DS
+;Dуstr:			RCX, R10B, R8D, RAX
+;==============================================================
+hex_format:
+				mov rsi, buffer
+				add rsi, BUFFER_SIZE
+				mov rcx, 8			; 4*2: 4 bytes and in one byte we can find 2 hex digits
+				mov al, 0x0F
+				xor rdx,rdx
+
+.hex_format_loop:
+				dec rsi
+				inc rdx
+
+				mov r10b, r8b
+				shr r8d, 4
+
+				and r10b, al
+				cmp r10b, 10
+				jae .need_letter
+				add r10b, '0'
+				mov [rsi], r10b
+				jmp .number				               ;Что лучше? Два раза записать в память, или 2 джампа (один из них обязательно сработает)
+.need_letter:
+				add r10b, 'A' - 10
+				mov [rsi], r10b
+
+.number:
+				LOOP .hex_format_loop
+
+				skip_zero_rsi						;Скипаем все незначащие нули
+
+				ret
+
+
+
+;==============================================================
+;Entry:			requires buffer and const BUFFER_SIZE
+;				R8D	- int value
+;Exit: 			RDX - length of buffer
+;				RSI - ptr to number in buffer
+;				ES  = DS
+;
+;Destr:			RCX RAX	R8D	R10B		
+;==============================================================
+bin_format:
+				mov rsi, buffer
+				add rsi, BUFFER_SIZE
+				xor rdx, rdx
+				mov al, 1
+				mov rcx, 32			;Int is a number with 32 bits
+
+.bin_format_loop:
+				dec rsi
+				inc rdx
+
+				mov r10b, r8b
+				shr r8d, 1
+
+				and r10b, al
+				add r10b, '0'
+				mov [rsi], r10b
+				LOOP .bin_format_loop
+
+				skip_zero_rsi						;Пропускаем все незначащие нули
+
+				ret
+
+
+;==============================================================
+;Entry:			requires buffer and const BUFFER_SIZE
+;				R8D	- int value
+;Exit: 			RDX - length of buffer
+;				RSI - ptr to number in buffer
+;				ES  = DS
+;
+;Destr:			RCX RAX	R8D	R10B		
+;==============================================================
+oct_format:
+				mov rsi, buffer
+				add rsi, BUFFER_SIZE
+				xor rdx, rdx
+				mov al, 7
+				mov rcx, 11			;11 octal digits in 4 bytes
+
+.oct_format_loop:
+				dec rsi
+				inc rdx
+
+				mov r10b, r8b
+				shr r8b, 3
+
+				and r10b, al
+				add r10b, '0'
+				mov [rsi], r10b
+				LOOP .oct_format_loop
+
+				skip_zero_rsi
+
+				ret
+
+
+;==============================================================
+;Entry:			requires buffer and const BUFFER_SIZE
+;				R8D	- int value
+;Exit: 			RDX - length of buffer
+;				RSI - ptr to number in buffer
+;				ES  = DS
+;
+;Destr:			RCX RAX	R8D	R10B R9B		
+;==============================================================
+dec_format:
+				mov rsi, buffer
+				add rsi, BUFFER_SIZE
+				xor r10b, r10b
+				mov r9d, 10
+				mov rcx, 9
+				mov eax, r8d
+
+.dec_format_loop:
+				dec rsi
+				inc r10b
+
+				xor edx, edx
+				div r9d
+
+				add edx, '0'
+				mov [rsi], dl 
+				LOOP .dec_format_loop
+
+				xor rdx, rdx
+				mov dl, r10b
+
+				skip_zero_rsi
 
 				ret
