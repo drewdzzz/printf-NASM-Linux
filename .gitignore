@@ -2,3 +2,5 @@
 format
 *.o
 format_parser
+new_print
+a.out

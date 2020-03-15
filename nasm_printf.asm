@@ -1,34 +1,14 @@
 section .data
-format_string db "I wanna decimal: %d, hex: %x, oct: %o, binary: %b, string: %s, char: %c and per cent: %%", 0x0a, '$'
-string:		  db "THAT'S A STRING FOR OUTPUT"
 
-
-BUFFER_SIZE equ 50
+BUFFER_SIZE equ 100
 buffer times BUFFER_SIZE db 0
 
-
+DETERMINATING_CHAR equ 0
 WRITE64 equ 0x01
 STDOUT  equ 0x01
 EXIT  	equ 0x3C
 
 section .text
-
-
-
-global _start
-
-_start:
-				push '#'
-				push string
-				times 4 push 186
-				mov rbp, rsp
-				mov rsi, format_string
-				call format_parser
-
-				mov rax, EXIT
-				xor rdi, rdi
-				syscall
-
 
 ;==============================================================
 ;Enter:			RDI - begin of the string
@@ -44,7 +24,6 @@ _start:
 				mov rdx, rsi
 				sub rdx, rdi
 				dec rdx					
-
 				mov rsi, rdi
 				mov rax, WRITE64
 				mov rdi, STDOUT
@@ -53,17 +32,32 @@ _start:
 
 
 ;==============================================================
-;Entry:			RSI - format string
+;Entry:			STDCALL standard arguments
 ;
 ;Exit:			
-;Destr:			R8B RDX RDI RAX RCX RBX R10
+;Destr:			RDX RDI RAX RCX RBX R10 R8 R9 RSI
 ;Note:			uses CLD
 ;==============================================================
-format_parser:
+global NASM_PRINTF
+NASM_PRINTF:	
+				pop rax
+				push r9
+				push r8
+				push rcx
+				push rdx
+				push rsi
+				push rdi
+				push rax
+				push rbp
+
+				mov rbp, rsp
+				add rbp, 16
+				mov rsi, [rbp]
+				add rbp, 8
 				xor cx, cx
 				inc cx
 				neg cx
-				mov r8b, '$'				
+				mov r8b, DETERMINATING_CHAR				
 				mov ah, '%'
 				mov rdi, rsi
 
@@ -88,7 +82,7 @@ format_parser:
 				mov rdi, rbx
 				mov rsi, rbx
 				mov ah, '%'
-				mov r8b, '$'
+				mov r8b, DETERMINATING_CHAR
 
 .not_format_symbol:
 				LOOP .parsing_string
@@ -98,6 +92,11 @@ format_parser:
 				
 				print_before_format_symbol
 
+				pop rbp
+				pop rax
+				times 6 pop rcx
+				push rax
+
 				ret
 
 
@@ -105,7 +104,7 @@ format_parser:
 ;==============================================================
 ;Entry:			R11B - format symbol
 ;				
-;Destr:			RAX RDI
+;Destr:			RAX RDI R8
 ;==============================================================
 select_substitution_and_print:
 
@@ -177,6 +176,28 @@ char_format:
 				ret
 
 
+
+;==============================================================
+;Enter			RDI - address of string
+;				ES  - segment fo address
+;Exit:			RDX
+;Destr:			RDI
+;==============================================================
+%macro 			strlen 0
+				
+				xor al, al
+
+				xor rcx, rcx
+				dec rcx
+
+				repne scasb
+				neg rcx
+				dec rcx
+				mov rdx, rcx
+
+%endmacro
+
+
 ;==============================================================
 ;Entry:		R8 - ADDRESS OF STRING
 ;
@@ -194,15 +215,9 @@ string_format:
 				mov rdi, r8
 				mov eax, ds
 				mov es, eax
-				xor al, al
+				
+				strlen
 
-				xor rcx, rcx
-				dec rcx
-
-				repne scasb
-				neg rcx
-				dec rcx
-				mov rdx, rcx
 				ret
 
 
