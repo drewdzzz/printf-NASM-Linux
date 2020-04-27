@@ -2,6 +2,7 @@ section .data
 
 BUFFER_SIZE equ 100
 buffer times BUFFER_SIZE db 0
+symbols db "0123456789ABCDEF"
 
 DETERMINATING_CHAR equ 0
 WRITE64 equ 0x01
@@ -32,14 +33,10 @@ section .text
 
 
 ;==============================================================
-;Entry:			STDCALL standard arguments
-;
-;Exit:			
-;Destr:			RDX RDI RAX RCX RBX R10 R8 R9 RSI
-;Note:			uses CLD
+;Enter:			RDI RSI RDX RCX R8 R9 - STDCALL first 6 arguments
+;Destr:			RAX
 ;==============================================================
-global NASM_PRINTF
-NASM_PRINTF:	
+%macro 			push_arguments 0
 				pop rax
 				push r9
 				push r8
@@ -48,6 +45,29 @@ NASM_PRINTF:
 				push rsi
 				push rdi
 				push rax
+%endmacro
+
+;==============================================================
+;Destr			RAX RCX
+;==============================================================
+%macro 			pop_arguments 0
+				pop rax
+				times 6 pop rcx
+				push rax
+%endmacro
+
+
+;==============================================================
+;Entry:			STDCALL standard arguments
+;
+;Exit:			
+;Destr:			RDX RDI RAX RCX RBX R10 R8 R9 RSI R11B
+;Note:			uses CLD
+;==============================================================
+global NASM_PRINTF
+NASM_PRINTF:	
+				push_arguments
+
 				push rbp
 
 				mov rbp, rsp
@@ -93,9 +113,8 @@ NASM_PRINTF:
 				print_before_format_symbol
 
 				pop rbp
-				pop rax
-				times 6 pop rcx
-				push rax
+				
+				pop_arguments
 
 				ret
 
@@ -140,7 +159,7 @@ select_substitution_and_print:
 				call string_format
 				jmp .format_defined
 
-.binary:			call bin_format
+.binary:		call bin_format
 				jmp .format_defined
 
 .octal:			call oct_format
@@ -221,6 +240,7 @@ string_format:
 				ret
 
 
+
 ;==============================================================
 ;Enter:		RSI - address of buffer
 ;			RDX - length of buffer
@@ -230,7 +250,7 @@ string_format:
 ;			ES  = DS	
 ;Destr:		RAX RCX
 ;==============================================================
-%macro skip_zero_rsi 0
+%macro 			skip_zero_rsi 0
 				mov eax, ds
 				mov es, eax
 				mov al, '0'
@@ -247,6 +267,7 @@ string_format:
 %endmacro
 
 
+
 ;==============================================================
 ;Entry:			requires buffer and const BUFFER_SIZE
 ;				R8D	- int value
@@ -258,31 +279,12 @@ string_format:
 hex_format:
 				mov rsi, buffer
 				add rsi, BUFFER_SIZE
-				mov rcx, 8			; 4*2: 4 bytes and in one byte we can find 2 hex digits
+				mov rcx, 8								;4*2: 4 bytes and in one byte we can find 2 hex digits
 				mov al, 0x0F
 				xor rdx,rdx
-
-.hex_format_loop:
-				dec rsi
-				inc rdx
-
-				mov r10b, r8b
-				shr r8d, 4
-
-				and r10b, al
-				cmp r10b, 10
-				jae .need_letter
-				add r10b, '0'
-				mov [rsi], r10b
-				jmp .number				               ;Что лучше? Два раза записать в память, или 2 джампа (один из них обязательно сработает)
-.need_letter:
-				add r10b, 'A' - 10
-				mov [rsi], r10b
-
-.number:
-				LOOP .hex_format_loop
-
-				skip_zero_rsi						;Скипаем все незначащие нули
+				mov r11b, 4
+				
+				call format_proccess					
 
 				ret
 
@@ -295,28 +297,17 @@ hex_format:
 ;				RSI - ptr to number in buffer
 ;				ES  = DS
 ;
-;Destr:			RCX RAX	R8D	R10B		
+;Destr:			RCX RAX	R8D	R10B	
 ;==============================================================
 bin_format:
 				mov rsi, buffer
 				add rsi, BUFFER_SIZE
 				xor rdx, rdx
 				mov al, 1
-				mov rcx, 32			;Int is a number with 32 bits
+				mov rcx, 32							;Int is a number with 32 bits
+				mov r11b, 1
 
-.bin_format_loop:
-				dec rsi
-				inc rdx
-
-				mov r10b, r8b
-				shr r8d, 1
-
-				and r10b, al
-				add r10b, '0'
-				mov [rsi], r10b
-				LOOP .bin_format_loop
-
-				skip_zero_rsi						;Пропускаем все незначащие нули
+				call format_proccess
 
 				ret
 
@@ -328,7 +319,7 @@ bin_format:
 ;				RSI - ptr to number in buffer
 ;				ES  = DS
 ;
-;Destr:			RCX RAX	R8D	R10B		
+;Destr:			RCX RAX	R8D	R10B
 ;==============================================================
 oct_format:
 				mov rsi, buffer
@@ -336,20 +327,9 @@ oct_format:
 				xor rdx, rdx
 				mov al, 7
 				mov rcx, 11			;11 octal digits in 4 bytes
+				mov r11b, 3
 
-.oct_format_loop:
-				dec rsi
-				inc rdx
-
-				mov r10b, r8b
-				shr r8b, 3
-
-				and r10b, al
-				add r10b, '0'
-				mov [rsi], r10b
-				LOOP .oct_format_loop
-
-				skip_zero_rsi
+				call format_proccess
 
 				ret
 
@@ -402,5 +382,44 @@ percent_format:
 				mov [rsi], r8b
 				xor rdx, rdx
 				inc rdx
+
+				ret
+
+
+
+;==============================================================
+;Enter:			RCX - max number of symbols
+;				RSI - ptr right after buffer
+;				AL  - mask for format
+;				RDX - must be zero
+;				R8D - formatiing value
+;				R11B - size of mask
+;				
+;
+;Exit:			RDX - length of formated string
+;Destr:			R10B R9
+;==============================================================
+format_proccess:
+				dec rsi
+				inc rdx
+
+				mov r9b, cl
+				mov r10b, r8b
+				mov cl, r11b
+				shr r8d, cl
+
+				and r10b, al
+
+				mov cl, r9b
+
+				mov r9, symbols
+				and r10, 0xFFFF
+				mov r9b, [r9 + r10]
+
+				mov [rsi], r9b
+
+				LOOP format_proccess
+
+				skip_zero_rsi
 
 				ret
